@@ -24,20 +24,15 @@ class GitignoreParser():
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith('#'):
-                            patterns.append(self._convert_glob_into_regex(line))
+                            patterns.append(line)
             except Exception as e:
                 logging.error(f"Error encountered while parsing gitignore file. Details: \n{e}")
         return patterns
-    
-    def _convert_glob_into_regex(self, pattern):
-        """A method to convert glob (gitignore's standard format) to regex for matching."""
-        # TODO: This is for a future implementation.
-        return pattern
     
     def is_ignored(self, string_to_match: str) -> bool:
         """A method to check if the inputted string matches with any of the initiated gitignore patterns."""
         try:
             ignore = self.spec.match_file(string_to_match)
         except Exception as e:
-            print("Error encountered while matching file with glob pattern: {e}")
+            print(f"Error encountered while matching file with glob pattern: {e}")
         return ignore

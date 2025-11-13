@@ -9,7 +9,14 @@ def parse_directory(directory, tree_only: bool = False):
 
     package_dir = os.path.dirname(os.path.abspath(__file__))
     default_ignores_path = os.path.join(package_dir, "default.gitignore")
-    parser = GitignoreParser([default_ignores_path])
+
+    # Check for user's .gitignore file in the directory being scanned
+    gitignore_paths = [default_ignores_path]
+    user_gitignore_path = os.path.join(directory, ".gitignore")
+    if os.path.exists(user_gitignore_path):
+        gitignore_paths.append(user_gitignore_path)
+
+    parser = GitignoreParser(gitignore_paths)
 
     directory_breakdown = scan_directory(directory, parser)
 
