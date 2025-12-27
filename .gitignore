@@ -6,3 +6,7 @@ dist
 .DS_Store
 
 .gitignore
+
+.venv
+
+__pycache__
