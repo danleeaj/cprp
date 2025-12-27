@@ -7,6 +7,11 @@ import os.path
 
 def parse_directory(directory, tree_only: bool = False):
 
+    if not os.path.exists(directory):
+        raise FileNotFoundError(f"The specified directory does not exist: {directory}")
+    if not os.path.isdir(directory):
+        raise NotADirectoryError(f"The specified path is not a directory: {directory}")
+
     package_dir = os.path.dirname(os.path.abspath(__file__))
     default_ignores_path = os.path.join(package_dir, "default.gitignore")
     parser = GitignoreParser([default_ignores_path])
