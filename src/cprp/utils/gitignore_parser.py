@@ -39,5 +39,5 @@ class GitignoreParser():
         try:
             ignore = self.spec.match_file(string_to_match)
         except Exception as e:
-            print("Error encountered while matching file with glob pattern: {e}")
+            print(f"Error encountered while matching file with glob pattern: {e}")
         return ignore
