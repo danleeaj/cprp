@@ -62,6 +62,69 @@ class ParseDirectoryTests(unittest.TestCase):
         with self.assertRaises(NotADirectoryError):
             parse_directory(str(file_path))
 
+    def test_nested_rules_are_scoped_and_override_parent_rules(self):
+        self.write(".gitignore", "*.log\n")
+        self.write("a/.gitignore", "!keep.log\n/local.txt\ncache/\n")
+        self.write("a/deep/.gitignore", "!deep.log\n")
+        excluded = ["a/drop.log", "a/local.txt", "a/cache/data.txt", "b/keep.log"]
+        included = ["a/keep.log", "a/deep/deep.log", "a/deep/local.txt", "b/local.txt"]
+        for path in excluded + included:
+            self.write(path, "payload:" + path)
+        with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+            with redirect_stdout(io.StringIO()):
+                parse_directory(str(self.root))
+        output = self.copied_output(copy_mock)
+        for path in excluded:
+            self.assertNotIn("payload:" + path, output)
+        for path in included:
+            self.assertIn("## " + path + "\npayload:" + path, output)
+
+    def test_subfolder_inherits_rules_to_nearest_repository_boundary(self):
+        self.write(".gitignore", "*.log\n/sub/root-only.txt\n")
+        (self.root / ".git").mkdir()
+        self.write("sub/.gitignore", "!keep.log\n")
+        self.write("sub/keep.log", "keep-payload")
+        self.write("sub/drop.log", "drop-payload")
+        self.write("sub/root-only.txt", "root-payload")
+        with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+            with redirect_stdout(io.StringIO()):
+                parse_directory(str(self.root / "sub"))
+        output = self.copied_output(copy_mock)
+        self.assertIn("keep-payload", output)
+        self.assertNotIn("drop-payload", output)
+        self.assertNotIn("root-payload", output)
+        self.write("sub/.git", "gitdir: elsewhere\n")
+        with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+            with redirect_stdout(io.StringIO()):
+                parse_directory(str(self.root / "sub"))
+        self.assertIn("drop-payload", self.copied_output(copy_mock))
+
+    def test_ignored_parent_cannot_be_reincluded_by_nested_rules(self):
+        (self.root / ".git").mkdir()
+        self.write(".gitignore", "excluded/\n")
+        self.write("excluded/.gitignore", "!keep.txt\n")
+        self.write("excluded/keep.txt", "excluded-payload")
+        for root in (self.root, self.root / "excluded"):
+            with self.subTest(root=root):
+                with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+                    with redirect_stdout(io.StringIO()):
+                        parse_directory(str(root))
+                self.assertNotIn("excluded-payload", self.copied_output(copy_mock))
+
+    def test_nested_rules_apply_inside_followed_directory_links(self):
+        with tempfile.TemporaryDirectory() as external:
+            target = Path(external)
+            (target / ".gitignore").write_text("drop.txt\n")
+            (target / "drop.txt").write_text("drop-payload")
+            (target / "keep.txt").write_text("keep-payload")
+            (self.root / "linked").symlink_to(target, target_is_directory=True)
+            with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+                with redirect_stdout(io.StringIO()):
+                    parse_directory(str(self.root))
+            output = self.copied_output(copy_mock)
+            self.assertIn("## linked/keep.txt\nkeep-payload", output)
+            self.assertNotIn("drop-payload", output)
+
     def test_tree_only_does_not_read_file_contents(self):
         self.write("file.txt", "content")
 
@@ -74,6 +137,75 @@ class ParseDirectoryTests(unittest.TestCase):
         output = self.copied_output(copy_mock)
         self.assertIn("file.txt", output)
         self.assertNotIn("## file.txt", output)
+
+    def test_broken_link_warns_and_other_files_are_copied(self):
+        self.write("keep.txt", "keep-content")
+        (self.root / "broken").symlink_to("missing.txt")
+
+        with self.assertLogs(level="WARNING") as logs:
+            with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+                with redirect_stdout(io.StringIO()):
+                    parse_directory(str(self.root))
+
+        self.assertIn("broken", "\n".join(logs.output))
+        output = self.copied_output(copy_mock)
+        self.assertIn("keep-content", output)
+        self.assertNotIn("broken", output)
+
+    def test_directory_links_are_followed_but_ancestor_loops_stop(self):
+        self.write("keep.txt", "keep-content")
+        (self.root / "loop").symlink_to(".", target_is_directory=True)
+        with tempfile.TemporaryDirectory() as external:
+            Path(external, "outside.txt").write_text("outside-content", encoding="utf-8")
+            (self.root / "external").symlink_to(external, target_is_directory=True)
+            for tree_only in (False, True):
+                with self.subTest(tree_only=tree_only):
+                    with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+                        with redirect_stdout(io.StringIO()):
+                            parse_directory(str(self.root), tree_only=tree_only)
+                    output = self.copied_output(copy_mock)
+                    self.assertIn("loop/", output)
+                    self.assertIn("external/", output)
+                    self.assertIn("outside.txt", output)
+                    self.assertNotIn("not followed", output)
+                    self.assertNotIn("## loop", output)
+                    if not tree_only:
+                        self.assertIn("keep-content", output)
+                        self.assertIn("## external/outside.txt\noutside-content", output)
+
+    def test_directory_link_aliases_are_each_scanned_with_ignore_rules(self):
+        self.write(".gitignore", "ignored/\n*/drop.txt\n")
+        self.write("target/keep.txt", "keep-content")
+        self.write("target/drop.txt", "drop-content")
+        for name in ("alias-a", "alias-b", "ignored"):
+            (self.root / name).symlink_to("target", target_is_directory=True)
+        with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+            with redirect_stdout(io.StringIO()):
+                parse_directory(str(self.root))
+        output = self.copied_output(copy_mock)
+        for name in ("alias-a", "alias-b", "target"):
+            self.assertIn(f"## {name}/keep.txt\nkeep-content", output)
+        self.assertNotIn("## ignored/", output)
+        self.assertNotIn("-- ignored/", output)
+        self.assertNotIn("drop-content", output)
+
+    def test_ignored_broken_link_is_skipped_without_warning(self):
+        self.write(".gitignore", "broken\n")
+        (self.root / "broken").symlink_to("missing.txt")
+        with patch("cprp.utils.scan_directory.logging.warning") as warning:
+            with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+                with redirect_stdout(io.StringIO()):
+                    parse_directory(str(self.root))
+        warning.assert_not_called()
+        self.copied_output(copy_mock)
+
+    def test_valid_file_link_still_copies_contents(self):
+        self.write("original.txt", "linked-content")
+        (self.root / "alias.txt").symlink_to("original.txt")
+        with patch("cprp.utils.parse_directory.pyperclip.copy") as copy_mock:
+            with redirect_stdout(io.StringIO()):
+                parse_directory(str(self.root))
+        self.assertIn("## alias.txt\nlinked-content", self.copied_output(copy_mock))
 
     def test_read_failure_does_not_copy_or_print_partial_success(self):
         self.write("file.txt", "content")

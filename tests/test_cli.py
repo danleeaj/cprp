@@ -43,6 +43,37 @@ class CliTests(unittest.TestCase):
             f"The specified path is not a directory: {file_path}",
         )
 
+    def test_no_follow_symlinks_omits_links_in_full_and_tree_output(self):
+        (self.root / "real").mkdir()
+        (self.root / "real/keep.txt").write_text("keep-content")
+        (self.root / "dir-alias").symlink_to("real", target_is_directory=True)
+        (self.root / "file-alias").symlink_to("real/keep.txt")
+        (self.root / "real/nested-alias").symlink_to("keep.txt")
+        (self.root / "broken-alias").symlink_to("missing")
+        for flags in (
+            ["--no-follow-symlinks"],
+            ["--no-follow-symlinks", "--tree-only"],
+            ["-ns"],
+            ["-ns", "--tree-only"],
+        ):
+            with self.subTest(flags=flags):
+                with patch("cprp.utils.parse_directory.pyperclip.copy") as copy:
+                    result = self.runner.invoke(app, [*flags, str(self.root)])
+                self.assertEqual(result.exit_code, 0, result.output)
+                output = copy.call_args.args[0]
+                self.assertNotIn("alias", output)
+                self.assertIn("keep.txt", output)
+                if "--tree-only" not in flags:
+                    self.assertIn("## real/keep.txt\nkeep-content", output)
+
+    def test_default_still_follows_symlinks(self):
+        (self.root / "target.txt").write_text("linked-content")
+        (self.root / "alias.txt").symlink_to("target.txt")
+        with patch("cprp.utils.parse_directory.pyperclip.copy") as copy:
+            result = self.runner.invoke(app, [str(self.root)])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("## alias.txt\nlinked-content", copy.call_args.args[0])
+
     def test_filesystem_failure_has_concise_error(self):
         with patch(
             "cprp.cli.parse_directory",

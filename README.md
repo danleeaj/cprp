@@ -55,9 +55,15 @@ cprp -h
 
 Directory entries are processed alphabetically so the generated output is stable between runs. cprp applies its packaged default exclusions, such as `.git`, `.venv`, and Python cache files, followed by the `.gitignore` in the root of the directory being scanned. Ignore patterns are matched relative to that root directory.
 
-Only the root `.gitignore` is loaded currently; discovering additional `.gitignore` files in nested directories remains planned work.
+Nested `.gitignore` files are loaded as folders are scanned. Each file's rules are relative to its own folder, and deeper rules override matching parent rules, including `!` exceptions. Excluded directories are not entered, so rules inside them cannot re-include their contents.
+
+When scanning a subfolder of a Git repository, cprp inherits parent `.gitignore` rules up to the nearest repository root (including worktrees with a `.git` file). Outside a Git repository, rule discovery starts at the selected directory. Global Git ignore settings and `.git/info/exclude` are not loaded.
 
 File-content headings use paths relative to the scanned directory, such as `## database/models.py`, so files with the same name in different directories remain distinguishable.
+
+Symbolic links (or folder shortcuts) will be followed unless excluded, or specified. A link that goes back to an ancestoer directory will show up in th directory tree, but will be ignored (to prevent loops). Broken or unresolvable links are skipped.
+
+Use `cprp -ns /path/to/directory` (or `--no-follow-symlinks`) to omit symbolic links to files and folders from both the tree and copied contents.
 
 ### Requirements
 
@@ -79,7 +85,6 @@ File-content headings use paths relative to the scanned directory, such as `## d
 **Work in progress**
 * Ignore functionality
   * Custom ignores (an 'exclude.txt' that could be entered as an argument)
-  * Discover `.gitignore` files in nested directories
 * Include functionality
   * Custom includes (only include a certain filetype, for example, only .py files)
 * Individual files
